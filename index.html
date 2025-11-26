@@ -8,7 +8,220 @@
 
   <iframe 
     id="app-frame"
-    src="https://script.google.com/macros/s/AKfycbyH0SZlRdKsWwGf2_mK3slkvL8qEkv7N6MF2hVyPcAWl3549AckGLPcEeO01O2_3B0WJA/exec"
+    src="/**
+ * @OnlyCurrentDoc
+ */
+
+/**
+ * Serves the HTML file.
+ */
+function doGet(e) {
+  return HtmlService.createHtmlOutputFromFile('index.html')
+    .setTitle('Team Performance Dashboard')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setSandboxMode(HtmlService.SandboxMode.IFRAME);
+}
+
+/**
+ * SECURE LOGIN FUNCTION
+ * Verifies username and password.
+ * Returns success status and the display name for the dashboard.
+ */
+function checkLogin(username, password) {
+  const validUsers = {
+    'admin':  { pass: 'admin123',   name: 'System Administrator' },
+    'sahil':  { pass: 'code123',    name: 'Sahil Developer' },
+    'user':   { pass: '12345',      name: 'Formulaic Member' },
+    'junaid': { pass: 'junaid@123', name: 'Vice President' }
+  };
+
+  if (validUsers[username] && validUsers[username].pass === password) {
+    return { success: true, name: validUsers[username].name };
+  } else {
+    return { success: false, error: 'Invalid Username or Password' };
+  }
+}
+
+/**
+ * Fetches all sheet names.
+ */
+function getAvailableSheets() {
+  try {
+    const sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+    return sheets.map(sheet => sheet.getName());
+  } catch (e) {
+    Logger.log(`Error in getAvailableSheets: ${e}`);
+    return [];
+  }
+}
+
+/**
+ * Helper to process data rows.
+ */
+function processData(values, nameColIndex, columns) {
+  const data = [];
+  const calculatedTotals = {};
+  let sheetGrandTotal = null; 
+  
+  columns.forEach(col => {
+    calculatedTotals[col.key] = 0;
+  });
+
+  for (const row of values) {
+    const name = row[nameColIndex];
+    
+    if (!name) continue;
+
+    const nameStr = name.toString().toLowerCase();
+
+    // Check if this row is the Grand Total row
+    if (nameStr.includes('grand total') || nameStr.includes('total')) {
+      sheetGrandTotal = {};
+      columns.forEach(col => {
+        let value = parseFloat(row[col.index]) || 0;
+        if (col.roundTo !== undefined && col.roundTo !== null) {
+          value = parseFloat(value.toFixed(col.roundTo));
+        }
+        sheetGrandTotal[col.key] = value;
+      });
+      continue; 
+    }
+
+    // Process Regular Rows
+    const entry = { name: name };
+    columns.forEach(col => {
+      let value = parseFloat(row[col.index]) || 0;
+      
+      if (col.roundTo !== undefined && col.roundTo !== null) {
+        value = parseFloat(value.toFixed(col.roundTo));
+      }
+
+      entry[col.key] = value;
+      calculatedTotals[col.key] += value;
+    });
+    data.push(entry);
+  }
+  
+  columns.forEach(col => {
+    if (col.roundTo !== undefined && col.roundTo !== null) {
+      calculatedTotals[col.key] = parseFloat(calculatedTotals[col.key].toFixed(col.roundTo));
+    }
+  });
+
+  return { 
+    data, 
+    totals: sheetGrandTotal || calculatedTotals 
+  };
+}
+
+
+/**
+ * Main function to get data from a specific sheet.
+ */
+function getSheetData(sheetName) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(sheetName);
+
+    if (!sheet) {
+      return { success: false, error: 'Sheet not found: ' + sheetName };
+    }
+
+    // 1. Technical Managers (Today) - A:G
+    const techTodayValues = sheet.getRange('A2:G').getValues();
+    const techTodayColumns = [
+      { index: 1, key: 'visited' },         // B
+      { index: 2, key: 'drafted' },         // C
+      { index: 3, key: 'pendingDraft' },    // D
+      { index: 4, key: 'finalized' },       // E
+      { index: 5, key: 'pendingFinalize' }, // F
+      { index: 6, key: 'onRoute' }          // G
+    ];
+    const technicalToday = processData(techTodayValues, 0, techTodayColumns);
+
+    // 2. Technical Managers (Monthly) - I2:M91
+    const techMonthValues = sheet.getRange('I2:M91').getValues();
+    const techMonthColumns = [
+      { index: 1, key: 'totalCases' },
+      { index: 2, key: 'totalVisited' },
+      { index: 3, key: 'fileFinalized' },
+      { index: 4, key: 'pendingNotVisited' }
+    ];
+    const technicalMonth = processData(techMonthValues, 0, techMonthColumns);
+
+    // 3. Drafters (Today) - P2:Q91
+    const drafterTodayValues = sheet.getRange('P2:Q91').getValues();
+    const drafterTodayColumns = [{ index: 1, key: 'drafted' }];
+    const draftersToday = processData(drafterTodayValues, 0, drafterTodayColumns);
+
+    // 4. Drafters (Monthly) - S2:T91
+    const drafterMonthValues = sheet.getRange('S2:T91').getValues();
+    const drafterMonthColumns = [{ index: 1, key: 'drafted' }];
+    const draftersMonth = processData(drafterMonthValues, 0, drafterMonthColumns);
+
+    // 5. Engineers (Today) - V2:W91
+    const engineerTodayValues = sheet.getRange('V2:W91').getValues();
+    const engineerTodayColumns = [{ index: 1, key: 'visited' }];
+    const engineersToday = processData(engineerTodayValues, 0, engineerTodayColumns);
+
+    // 6. Engineers (Monthly) - Y2:Z91
+    const engineerMonthValues = sheet.getRange('Y2:Z91').getValues();
+    const engineerMonthColumns = [{ index: 1, key: 'visited' }];
+    const engineersMonth = processData(engineerMonthValues, 0, engineerMonthColumns);
+
+    // 7. After Visit TAT - AC3:AD91
+    const tatAfterVisitValues = sheet.getRange('AC3:AD91').getValues();
+    const tatAfterVisitColumns = [{ index: 1, key: 'avgTat', roundTo: 1 }];
+    const tatAfterVisit = processData(tatAfterVisitValues, 0, tatAfterVisitColumns);
+
+    // 8. Overall TAT - AF3:AG91
+    const tatOverallValues = sheet.getRange('AF3:AG91').getValues();
+    const tatOverallColumns = [{ index: 1, key: 'avgTat', roundTo: 1 }];
+    const tatOverall = processData(tatOverallValues, 0, tatOverallColumns);
+
+    // 9. Bank Comparison (Today) - AI3:AJ91
+    const bankTodayValues = sheet.getRange('AI3:AJ91').getValues();
+    const bankTodayColumns = [{ index: 1, key: 'cases' }];
+    const bankComparisonToday = processData(bankTodayValues, 0, bankTodayColumns);
+
+    // 10. Bank Comparison (Monthly) - AL3:AM91
+    const bankMonthValues = sheet.getRange('AL3:AM91').getValues();
+    const bankMonthColumns = [{ index: 1, key: 'cases' }];
+    const bankComparisonMonth = processData(bankMonthValues, 0, bankMonthColumns);
+
+    // 11. Bank Comparison (Till Date) - AO3:AP600
+    const bankTillDateValues = sheet.getRange('AO3:AP600').getValues();
+    const bankTillDateColumns = [{ index: 1, key: 'cases' }];
+    const bankComparisonTillDate = processData(bankTillDateValues, 0, bankTillDateColumns);
+
+    // 12. Bank Comparison (Current vs Last Month) - AR3:AS600
+    const bankCurrentLastValues = sheet.getRange('AR3:AS600').getValues();
+    const bankCurrentLastColumns = [{ index: 1, key: 'cases' }];
+    const bankComparisonCurrentVsLast = processData(bankCurrentLastValues, 0, bankCurrentLastColumns);
+
+    return {
+      success: true,
+      timestamp: new Date().toISOString(),
+      technicalToday,
+      technicalMonth,
+      draftersToday,
+      draftersMonth,
+      engineersToday,
+      engineersMonth,
+      tatAfterVisit,
+      tatOverall,
+      bankComparisonToday,
+      bankComparisonMonth,
+      bankComparisonTillDate,
+      bankComparisonCurrentVsLast
+    };
+
+  } catch (e) {
+    Logger.log(`Error in getSheetData: ${e}`);
+    return { success: false, error: e.message };
+  }
+}"
     width="100%"
     height="100%"
     frameborder="0"
